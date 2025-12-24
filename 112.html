@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Smart Traffic App</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+
+<style>
+* {
+  box-sizing: border-box;
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #0f172a;
+  color: #fff;
+}
+
+header {
+  padding: 16px 24px;
+  background: linear-gradient(90deg,#2563eb,#1e40af);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  height: calc(100vh - 64px);
+}
+
+.sidebar {
+  background: rgba(255,255,255,0.08);
+  backdrop-filter: blur(14px);
+  padding: 20px;
+  overflow-y: auto;
+}
+
+input {
+  width: 100%;
+  padding: 14px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  border: none;
+  outline: none;
+  background: rgba(255,255,255,0.15);
+  color: white;
+  font-size: 15px;
+}
+
+input::placeholder {
+  color: #cbd5f5;
+}
+
+button {
+  width: 100%;
+  padding: 14px;
+  border-radius: 10px;
+  border: none;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.primary {
+  background: #22c55e;
+}
+
+button.primary:hover {
+  background: #16a34a;
+}
+
+button.gmaps {
+  background: #3b82f6;
+  margin-top: 10px;
+}
+
+button.gmaps:hover {
+  background: #2563eb;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.card {
+  margin-top: 16px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 14px;
+  padding: 14px;
+  font-size: 14px;
+}
+
+.label {
+  color: #94a3b8;
+}
+
+.value {
+  font-weight: 600;
+}
+
+.low { color: #22c55e; }
+.medium { color: #facc15; }
+.high { color: #ef4444; }
+
+.steps {
+  margin-top: 12px;
+  padding-left: 18px;
+}
+
+#map {
+  height: 100%;
+}
+</style>
+</head>
+
+<body>
+
+<header>🚦 Smart Traffic Navigation</header>
+
+<div class="app">
+
+<div class="sidebar">
+
+  <input id="start" placeholder="Current Location (e.g. Srikakulam)">
+  <input id="end" placeholder="Destination (e.g. Srikakulam Junction)">
+
+  <button class="primary" onclick="navigate()">Start Navigation</button>
+
+  <button class="gmaps" id="gmapsBtn" disabled>
+    Open in Google Maps (Live Traffic)
+  </button>
+
+  <div class="card">
+    <div><span class="label">From:</span> <span class="value" id="from">—</span></div>
+    <div><span class="label">To:</span> <span class="value" id="to">—</span></div>
+    <div><span class="label">Distance:</span> <span class="value" id="distance">—</span></div>
+    <div><span class="label">Duration:</span> <span class="value" id="duration">—</span></div>
+    <div><span class="label">Traffic:</span> <span class="value" id="traffic">—</span></div>
+  </div>
+
+  <div class="card">
+    <div class="label">Route Instructions</div>
+    <ul class="steps" id="steps"></ul>
+  </div>
+
+</div>
+
+<div id="map"></div>
+
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+let map, routeLayer;
+
+async function geocode(place) {
+  const res = await fetch(
+    `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(place)}`
+  );
+  const data = await res.json();
+  return data.length ? [parseFloat(data[0].lat), parseFloat(data[0].lon)] : null;
+}
+
+function trafficLevel(min) {
+  if (min < 15) return ["Low Traffic", "low"];
+  if (min < 40) return ["Moderate Traffic", "medium"];
+  return ["Heavy Traffic", "high"];
+}
+
+async function navigate() {
+  const s = document.getElementById("start").value;
+  const e = document.getElementById("end").value;
+
+  if (!s || !e) {
+    alert("Enter both locations");
+    return;
+  }
+
+  const start = await geocode(s);
+  const end = await geocode(e);
+  if (!start || !end) {
+    alert("Location not found");
+    return;
+  }
+
+  const res = await fetch(
+    `https://router.project-osrm.org/route/v1/driving/${start[1]},${start[0]};${end[1]},${end[0]}?overview=full&geometries=geojson&steps=true`
+  );
+  const data = await res.json();
+  const route = data.routes[0];
+
+  const dist = (route.distance / 1000).toFixed(1);
+  const time = Math.round(route.duration / 60);
+  const [trafficText, trafficClass] = trafficLevel(time);
+
+  document.getElementById("from").innerText = s;
+  document.getElementById("to").innerText = e;
+  document.getElementById("distance").innerText = dist + " km";
+  document.getElementById("duration").innerText = time + " min";
+
+  const trafficEl = document.getElementById("traffic");
+  trafficEl.innerText = trafficText;
+  trafficEl.className = "value " + trafficClass;
+
+  if (!map) {
+    map = L.map("map").setView(start, 13);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap"
+    }).addTo(map);
+  }
+
+  if (routeLayer) routeLayer.remove();
+
+  routeLayer = L.geoJSON(route.geometry, {
+    style: { color: "#22c55e", weight: 5 }
+  }).addTo(map);
+
+  map.fitBounds(routeLayer.getBounds());
+
+  L.marker(start).addTo(map);
+  L.marker(end).addTo(map);
+
+  const steps = document.getElementById("steps");
+  steps.innerHTML = "";
+  route.legs[0].steps.forEach(s => {
+    const li = document.createElement("li");
+    li.textContent = s.maneuver.instruction;
+    steps.appendChild(li);
+  });
+
+  // Google Maps Live Traffic Link
+  const gmapsBtn = document.getElementById("gmapsBtn");
+  const gmapsUrl =
+    `https://www.google.com/maps/dir/?api=1` +
+    `&origin=${encodeURIComponent(s)}` +
+    `&destination=${encodeURIComponent(e)}` +
+    `&travelmode=driving`;
+
+  gmapsBtn.disabled = false;
+  gmapsBtn.onclick = () => window.open(gmapsUrl, "_blank");
+}
+</script>
+
+</body>
+</html>
